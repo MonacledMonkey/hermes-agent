@@ -69,17 +69,17 @@ services:
       # - GOOGLE_CHAT_ALLOWED_USERS=${GOOGLE_CHAT_ALLOWED_USERS}
     command: ["gateway", "run"]
 
-  dashboard:
-    image: hermes-agent
-    container_name: hermes-dashboard
-    restart: unless-stopped
-    network_mode: host
-    depends_on:
-      - gateway
-    volumes:
-      - /.hermes:/opt/data
-    environment:
-      - HERMES_UID=${HERMES_UID:-10000}
-      - HERMES_GID=${HERMES_GID:-10000}
-    # Localhost-only. For remote access, tunnel via `ssh -L 9119:localhost:9119`.
-    command: ["dashboard", "--host", "127.0.0.1", "--no-open"]
+#  dashboard:
+#    image: hermes-agent
+#    container_name: hermes-dashboard
+#    restart: unless-stopped
+#    network_mode: host
+#    depends_on:
+#      - gateway
+#    volumes:
+#      - /.hermes:/opt/data
+#    environment:
+#      - HERMES_UID=${HERMES_UID:-10000}
+#      - HERMES_GID=${HERMES_GID:-10000}
+#    # Localhost-only. For remote access, tunnel via `ssh -L 9119:localhost:9119`.
+#    command: ["dashboard", "--host", "127.0.0.1", "--no-open"]
