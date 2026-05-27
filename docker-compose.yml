@@ -10,6 +10,9 @@
 #   - The newer Hermes image supervises the dashboard inside the gateway
 #     container when HERMES_DASHBOARD=true, so do not run a second
 #     hermes-dashboard container against the same /opt/data logs.
+#   - HOME is set to /opt/data so provider checks that use ~/.provider
+#     paths do not accidentally resolve to /root when the supervised
+#     process has dropped to the hermes user.
 #
 # Usage:
 #   HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose up -d
@@ -46,6 +49,7 @@ services:
       - /.hermes:/opt/data
       - /opt/data/obsidian/hermes-dev-team-vault:/opt/obsidian/hermes-dev-team-vault:rw
     environment:
+      - HOME=/opt/data
       - HERMES_UID=${HERMES_UID:-10000}
       - HERMES_GID=${HERMES_GID:-10000}
       - OBSIDIAN_VAULT_PATH=/opt/obsidian/hermes-dev-team-vault
