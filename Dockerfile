@@ -23,18 +23,20 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright
 # replaces tini with s6-overlay's /init (PID 1 = s6-svscan), which reaps
 # zombies non-blockingly on SIGCHLD and additionally supervises the main
 # hermes process, the dashboard, and per-profile gateways.
-RUN apt-get update -o Acquire::Retries=5 -o Acquire::ForceIPv4=true && \
-    apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    python3 \
-    gcc \
-    python3-dev \
-    libffi-dev \
-    procps \
-    git \
-    openssh-client && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update -o Acquire::Retries=5 -o Acquire::ForceIPv4=true
+
+RUN apt-get install -y --no-install-recommends ca-certificates
+RUN apt-get install -y --no-install-recommends curl
+RUN apt-get install -y --no-install-recommends python3
+RUN apt-get install -y --no-install-recommends gcc
+RUN apt-get install -y --no-install-recommends python3-dev
+RUN apt-get install -y --no-install-recommends libffi-dev
+RUN apt-get install -y --no-install-recommends procps
+RUN apt-get install -y --no-install-recommends git
+RUN apt-get install -y --no-install-recommends openssh-client
+
+RUN rm -rf /var/lib/apt/lists/*
+
 
 # ---------- s6-overlay install ----------
 # s6-overlay provides supervision for the main hermes process, the dashboard,
