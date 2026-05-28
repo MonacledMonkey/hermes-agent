@@ -44,9 +44,7 @@ RUN apt-get update && \
     openssh-client \
     docker-cli \
     xz-utils \
-    openjdk-17-jre-headless \
-    nodejs \
-    npm \
+    openjdk-21-jre-headless \
     zip \
     unzip \
     libgl1 \
