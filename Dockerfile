@@ -28,20 +28,12 @@ RUN apt-get update -o Acquire::Retries=5 -o Acquire::ForceIPv4=true && \
     ca-certificates \
     curl \
     python3 \
-    ffmpeg \
-    xvfb \
-    xdotool \
-    x11-utils \
-    wmctrl \
-    imagemagick \
     gcc \
     python3-dev \
     libffi-dev \
     procps \
     git \
-    gh \
-    openssh-client \
-    xz-utils && \
+    openssh-client && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------- s6-overlay install ----------
