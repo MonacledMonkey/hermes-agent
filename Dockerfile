@@ -40,6 +40,7 @@ RUN apt-get update && \
     libffi-dev \
     procps \
     git \
+    gh \
     openssh-client \
     docker-cli \
     xz-utils && \
