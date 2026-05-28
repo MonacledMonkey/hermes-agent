@@ -43,9 +43,18 @@ RUN apt-get update && \
     gh \
     openssh-client \
     docker-cli \
-    xz-utils && \
+    xz-utils \
+    openjdk-17-jre-headless \
+    nodejs \
+    npm \
+    zip \
+    unzip \
+    libgl1 \
+    libglx-mesa0 \
+    libglu1-mesa \
+    libopenal1 \
+    libsdl2-2.0-0 && \
     rm -rf /var/lib/apt/lists/*
-
 
 # ---------- s6-overlay install ----------
 # s6-overlay provides supervision for the main hermes process, the dashboard,
