@@ -23,48 +23,29 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright
 # replaces tini with s6-overlay's /init (PID 1 = s6-svscan), which reaps
 # zombies non-blockingly on SIGCHLD and additionally supervises the main
 # hermes process, the dashboard, and per-profile gateways.
-RUN set -eux; \
-    apt-get update -o Acquire::Retries=3; \
-    pick_pkg() { \
-        for pkg in "$@"; do \
-            if apt-cache show "$pkg" >/dev/null 2>&1; then \
-                printf '%s' "$pkg"; \
-                return 0; \
-            fi; \
-        done; \
-        return 1; \
-    }; \
-    java_pkg="$(pick_pkg openjdk-21-jre-headless openjdk-17-jre-headless)"; \
-    docker_pkg="$(pick_pkg docker-cli docker.io)"; \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        python3 \
-        ripgrep \
-        ffmpeg \
-        xvfb \
-        xdotool \
-        x11-utils \
-        wmctrl \
-        imagemagick \
-        gcc \
-        python3-dev \
-        libffi-dev \
-        procps \
-        git \
-        gh \
-        openssh-client \
-        "$docker_pkg" \
-        xz-utils \
-        "$java_pkg" \
-        zip \
-        unzip \
-        libgl1 \
-        libglx-mesa0 \
-        libglu1-mesa \
-        libopenal1 \
-        libsdl2-2.0-0; \
+    ca-certificates \
+    curl \
+    python3 \
+    ripgrep \
+    ffmpeg \
+    xvfb \
+    xdotool \
+    x11-utils \
+    wmctrl \
+    imagemagick \
+    gcc \
+    python3-dev \
+    libffi-dev \
+    procps \
+    git \
+    gh \
+    openssh-client \
+    docker-cli \
+    xz-utils && \
     rm -rf /var/lib/apt/lists/*
+
 
 # ---------- s6-overlay install ----------
 # s6-overlay provides supervision for the main hermes process, the dashboard,
