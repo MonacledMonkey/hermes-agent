@@ -23,62 +23,27 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright
 # replaces tini with s6-overlay's /init (PID 1 = s6-svscan), which reaps
 # zombies non-blockingly on SIGCHLD and additionally supervises the main
 # hermes process, the dashboard, and per-profile gateways.
-RUN set -eux; \
-    echo "=== OS RELEASE ==="; \
-    cat /etc/os-release; \
-    echo "=== APT SOURCES ==="; \
-    find /etc/apt -maxdepth 3 -type f -name '*.list' -o -name '*.sources' | xargs -r -I{} sh -c 'echo "--- {}"; cat "{}"'; \
-    echo "=== APT UPDATE ==="; \
-    apt-get update -o Acquire::Retries=5 -o Acquire::ForceIPv4=true; \
-    echo "=== PACKAGE CANDIDATES ==="; \
-    for pkg in \
-        ca-certificates \
-        curl \
-        python3 \
-        ripgrep \
-        ffmpeg \
-        xvfb \
-        xdotool \
-        x11-utils \
-        wmctrl \
-        imagemagick \
-        gcc \
-        python3-dev \
-        libffi-dev \
-        procps \
-        git \
-        gh \
-        openssh-client \
-        docker-cli \
-        xz-utils; \
-    do \
-        echo "--- $pkg"; \
-        apt-cache policy "$pkg" || true; \
-    done; \
-    echo "=== INSTALL ==="; \
+RUN apt-get update -o Acquire::Retries=5 -o Acquire::ForceIPv4=true && \
     apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        python3 \
-        ripgrep \
-        ffmpeg \
-        xvfb \
-        xdotool \
-        x11-utils \
-        wmctrl \
-        imagemagick \
-        gcc \
-        python3-dev \
-        libffi-dev \
-        procps \
-        git \
-        gh \
-        openssh-client \
-        docker-cli \
-        xz-utils; \
+    ca-certificates \
+    curl \
+    python3 \
+    ripgrep \
+    ffmpeg \
+    xvfb \
+    xdotool \
+    x11-utils \
+    wmctrl \
+    imagemagick \
+    gcc \
+    python3-dev \
+    libffi-dev \
+    procps \
+    git \
+    gh \
+    openssh-client \
+    xz-utils && \
     rm -rf /var/lib/apt/lists/*
-
-
 
 # ---------- s6-overlay install ----------
 # s6-overlay provides supervision for the main hermes process, the dashboard,
