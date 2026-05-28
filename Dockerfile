@@ -23,15 +23,37 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright
 # replaces tini with s6-overlay's /init (PID 1 = s6-svscan), which reaps
 # zombies non-blockingly on SIGCHLD and additionally supervises the main
 # hermes process, the dashboard, and per-profile gateways.
-RUN apt-get update -o Acquire::Retries=5 -o Acquire::ForceIPv4=true && \
+RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     python3 \
+    ripgrep \
+    ffmpeg \
+    xvfb \
+    xdotool \
+    x11-utils \
+    wmctrl \
+    imagemagick \
+    gcc \
+    python3-dev \
+    libffi-dev \
     procps \
     git \
+    gh \
     openssh-client \
-    xz-utils && \
+    docker-cli \
+    xz-utils \
+    openjdk-17-jre-headless \
+    nodejs \
+    npm \
+    zip \
+    unzip \
+    libgl1 \
+    libglx-mesa0 \
+    libglu1-mesa \
+    libopenal1 \
+    libsdl2-2.0-0 && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------- s6-overlay install ----------
@@ -126,7 +148,7 @@ COPY ui-tui/packages/hermes-ink/ ui-tui/packages/hermes-ink/
 ENV npm_config_install_links=false
 
 RUN npm install --prefer-offline --no-audit && \
-    npx playwright install chromium --only-shell && \
+    npx playwright install --with-deps chromium --only-shell && \
     (cd web && npm install --prefer-offline --no-audit) && \
     (cd ui-tui && npm install --prefer-offline --no-audit) && \
     npm cache clean --force
