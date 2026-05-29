@@ -47,6 +47,26 @@ services:
     network_mode: host
     volumes:
       - /.hermes:/opt/data
+      # Agent-operated GUI/runtime assets. Keep HERMES_HOME at /opt/data
+      # backed by /.hermes; mount the host /opt/data separately to avoid
+      # shadowing the live Hermes runtime/config directory.
+      - type: bind
+        source: /opt/data
+        target: /opt/host-data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/defold
+        target: /opt/defold
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /usr/local/bin/pixelorama
+        target: /usr/local/bin/pixelorama
+        read_only: true
+        bind:
+          create_host_path: false
       - /opt/data/obsidian/hermes-dev-team-vault:/opt/obsidian/hermes-dev-team-vault:rw
     environment:
       - HOME=/opt/data
