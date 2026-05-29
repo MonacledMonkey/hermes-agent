@@ -32,10 +32,16 @@ RUN set -eux; \
       ripgrep \
       ffmpeg \
       xvfb \
+      openbox \
+      dbus-x11 \
       xdotool \
       x11-utils \
       wmctrl \
       imagemagick \
+      krita \
+      fonts-dejavu-core \
+      fonts-liberation \
+      fonts-noto-color-emoji \
       gcc \
       python3-dev \
       libffi-dev \
@@ -52,7 +58,22 @@ RUN set -eux; \
       libglx-mesa0 \
       libglu1-mesa \
       libopenal1 \
-      libsdl2-2.0-0 && \
+      libsdl2-2.0-0 \
+      libgtk-3-0t64 \
+      libasound2t64 \
+      libnss3 \
+      libxss1 \
+      libsecret-1-0 \
+      libnotify4 \
+      libxtst6 \
+      libxrender1 \
+      libxrandr2 \
+      libxi6 \
+      libxinerama1 \
+      libxcursor1 \
+      libxcomposite1 \
+      libfuse2t64 \
+      fuse3 && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------- s6-overlay install ----------
@@ -237,9 +258,23 @@ RUN mkdir -p /etc/cont-init.d && \
 COPY --chmod=0755 docker/cont-init.d/015-supervise-perms /etc/cont-init.d/015-supervise-perms
 COPY --chmod=0755 docker/cont-init.d/02-reconcile-profiles /etc/cont-init.d/02-reconcile-profiles
 
+# ---------- Agent-owned GUI helpers ----------
+# The container image owns the virtual display stack used by role agents for
+# Defold/Krita/Pixelorama production and screenshot evidence. Defold itself is
+# expected to be mounted at /opt/defold:ro in private deployments because the
+# editor distribution is large and license-managed outside the public image.
+COPY --chmod=0755 docker/agent-gui-session.sh /usr/local/bin/agent-gui-session
+COPY --chmod=0755 docker/defold-wrapper.sh /usr/local/bin/defold
+
 # ---------- Runtime ----------
 ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist
 ENV HERMES_HOME=/opt/data
+ENV HERMES_AGENT_GUI_DISPLAY=:99
+ENV HERMES_AGENT_GUI_SCREEN=1280x720x24
+ENV DISPLAY=:99
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV ALSOFT_DRIVERS=null
+ENV NO_AT_BRIDGE=1
 # Pre-s6 entrypoint.sh did `source .venv/bin/activate` which exported
 # the venv bin onto PATH; Architecture B's main-wrapper.sh does the
 # same for the container's main process, but `docker exec` and our
