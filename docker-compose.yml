@@ -79,6 +79,9 @@ services:
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID}
       - ASSIST_ME_D1_DATABASE_ID=${ASSIST_ME_D1_DATABASE_ID}
       - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - CHARGEBEE_API_KEY=$(CHARGEBEE_API_KEY)
+      - WIX_API_KEY=$(WIX_API_KEY)
+      - WIX_ACCOUNT_ID=$(WIX_ACCOUNT_ID)
       # To expose the OpenAI-compatible API server beyond localhost,
       # uncomment BOTH lines (API_SERVER_KEY is mandatory for auth):
       # - API_SERVER_HOST=0.0.0.0
