@@ -128,6 +128,14 @@ class ResponsesApiTransport(ProviderTransport):
         reasoning_effort = _effort_clamp.get(reasoning_effort, reasoning_effort)
 
         response_tools = _responses_tools(tools)
+        # ``tools`` MUST be omitted entirely when there are no functions to
+        # expose: the openai SDK's ``responses.stream()`` / ``responses.parse()``
+        # eagerly call ``_make_tools(tools)`` which does ``for tool in tools``
+        # without a None guard, so passing ``tools=None`` raises
+        # ``TypeError: 'NoneType' object is not iterable`` before any HTTP
+        # request is issued (openai==2.24.0).  Reported for the
+        # ``openai-codex`` / ``gpt-5.5`` combo on chatgpt.com/backend-api/codex
+        # (#32892) when the agent runs without external tools registered.
         kwargs = {
             "model": model,
             "instructions": instructions,
@@ -137,10 +145,10 @@ class ResponsesApiTransport(ProviderTransport):
                 replay_encrypted_reasoning=replay_encrypted_reasoning,
                 current_issuer_kind=issuer_kind,
             ),
-            "tools": response_tools,
             "store": False,
         }
         if response_tools:
+            kwargs["tools"] = response_tools
             kwargs["tool_choice"] = "auto"
             kwargs["parallel_tool_calls"] = True
 
@@ -184,6 +192,17 @@ class ResponsesApiTransport(ProviderTransport):
         if request_overrides:
             kwargs.update(request_overrides)
 
+        # xAI Responses API rejects ``service_tier`` (HTTP 400 "Argument not
+        # supported: service_tier") — hit when ``/fast`` priority-processing
+        # mode lingers from a prior model in the same session, or when a
+        # user explicitly sets ``agent.service_tier`` in config.yaml.  The
+        # main-loop guard (``resolve_fast_mode_overrides`` only returns
+        # ``service_tier`` for OpenAI fast-eligible models) doesn't cover
+        # those leak paths, so strip defensively when targeting xAI.  See
+        # #28490 for the original report.
+        if is_xai_responses:
+            kwargs.pop("service_tier", None)
+
         # Forward per-request timeout to the SDK so OpenAI/Anthropic clients
         # honor it.  Without this, ``providers.<id>.request_timeout_seconds``
         # is silently dropped on the main agent Codex path while the
@@ -199,8 +218,14 @@ class ResponsesApiTransport(ProviderTransport):
             kwargs.pop("timeout", None)
 
         if is_codex_backend:
-            prompt_cache_key = kwargs.get("prompt_cache_key")
-            cache_scope_id = str(prompt_cache_key or session_id or "").strip()
+            # The Codex backend rejects body-level ``extra_headers`` with
+            # HTTP 400, but the OpenAI SDK's ``extra_headers`` kwarg maps
+            # to actual HTTP request headers (not body fields).  We need
+            # these headers for cache-scope routing so prompt cache hits
+            # remain high.  Send session_id / x-client-request-id as HTTP
+            # headers while keeping ``prompt_cache_key`` in the body for
+            # standard OpenAI routing as a belt-and-braces fallback.
+            cache_scope_id = str(session_id or "").strip()
             if cache_scope_id:
                 existing_extra_headers = kwargs.get("extra_headers")
                 merged_extra_headers: Dict[str, str] = {}
