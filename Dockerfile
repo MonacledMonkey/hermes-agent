@@ -23,9 +23,64 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/hermes/.playwright
 # replaces tini with s6-overlay's /init (PID 1 = s6-svscan), which reaps
 # zombies non-blockingly on SIGCHLD and additionally supervises the main
 # hermes process, the dashboard, and per-profile gateways.
-RUN apt-get update && \
+RUN set -eux; \
+    apt-get update -o Acquire::Retries=5 -o Acquire::ForceIPv4=true && \
     apt-get install -y --no-install-recommends \
-    ca-certificates curl iputils-ping python3 python-is-python3 ripgrep ffmpeg gcc g++ make cmake python3-dev python3-venv libffi-dev libolm-dev procps git openssh-client docker-cli xz-utils && \
+    ca-certificates \
+    curl \
+    iputils-ping \
+    python3 \
+    python-is-python3 \
+    python3-dev \
+    python3-venv \
+    ripgrep \
+    ffmpeg \
+    xvfb \
+    openbox \
+    dbus-x11 \
+    xdotool \
+    x11-utils \
+    wmctrl \
+    imagemagick \
+    krita \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-noto-color-emoji \
+    gcc \
+    g++ \
+    make \
+    cmake \
+    libffi-dev \
+    libolm-dev \
+    procps \
+    git \
+    gh \
+    openssh-client \
+    docker-cli \
+    xz-utils \
+    openjdk-21-jre-headless \
+    zip \
+    unzip \
+    libgl1 \
+    libglx-mesa0 \
+    libglu1-mesa \
+    libopenal1 \
+    libsdl2-2.0-0 \
+    libgtk-3-0t64 \
+    libasound2t64 \
+    libnss3 \
+    libxss1 \
+    libsecret-1-0 \
+    libnotify4 \
+    libxtst6 \
+    libxrender1 \
+    libxrandr2 \
+    libxi6 \
+    libxinerama1 \
+    libxcursor1 \
+    libxcomposite1 \
+    libfuse2t64 \
+    fuse3 && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------- s6-overlay install ----------
@@ -130,7 +185,9 @@ COPY ui-tui/packages/hermes-ink/ ui-tui/packages/hermes-ink/
 ENV npm_config_install_links=false
 
 RUN npm install --prefer-offline --no-audit && \
-    npx playwright install --with-deps chromium --only-shell && \
+    npx playwright install chromium --only-shell && \
+    (cd web && npm install --prefer-offline --no-audit) && \
+    (cd ui-tui && npm install --prefer-offline --no-audit) && \
     npm cache clean --force
 
 # ---------- Layer-cached Python dependency install ----------
@@ -262,6 +319,14 @@ RUN mkdir -p /etc/cont-init.d && \
 COPY --chmod=0755 docker/cont-init.d/015-supervise-perms /etc/cont-init.d/015-supervise-perms
 COPY --chmod=0755 docker/cont-init.d/02-reconcile-profiles /etc/cont-init.d/02-reconcile-profiles
 
+# ---------- Agent-owned GUI helpers ----------
+# The container image owns the virtual display stack used by role agents for
+# Defold/Krita/Pixelorama production and screenshot evidence. Defold itself is
+# expected to be mounted at /opt/defold:ro in private deployments because the
+# editor distribution is large and license-managed outside the public image.
+COPY --chmod=0755 docker/agent-gui-session.sh /usr/local/bin/agent-gui-session
+COPY --chmod=0755 docker/defold-wrapper.sh /usr/local/bin/defold
+
 # ---------- Runtime ----------
 ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist
 # Point the TUI launcher at the prebuilt bundle baked at build time (Layer 8:
@@ -296,6 +361,12 @@ ENV HERMES_HOME=/opt/data
 # the opt-out env var (HERMES_DOCKER_EXEC_AS_ROOT=1).
 COPY --chmod=0755 docker/hermes-exec-shim.sh /opt/hermes/bin/hermes
 
+ENV HERMES_AGENT_GUI_DISPLAY=:99
+ENV HERMES_AGENT_GUI_SCREEN=1280x720x24
+ENV DISPLAY=:99
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV ALSOFT_DRIVERS=null
+ENV NO_AT_BRIDGE=1
 # Pre-s6 entrypoint.sh did `source .venv/bin/activate` which exported
 # the venv bin onto PATH; Architecture B's main-wrapper.sh does the
 # same for the container's main process, but `docker exec` and our
