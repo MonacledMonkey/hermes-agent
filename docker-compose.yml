@@ -84,6 +84,7 @@ services:
       - WIX_ACCOUNT_ID=${WIX_ACCOUNT_ID}
       - SPEND_EAST_CLOUDFLARE_API_TOKEN=${SPEND_EAST_CLOUDFLARE_API_TOKEN}
       - SPEND_EAST_CLOUDFLARE_ACCOUNT_ID=${SPEND_EAST_CLOUDFLARE_ACCOUNT_ID}
+      - SPEND_EAST_D1_DATABASE_ID=${SPEND_EAST_D1_DATABASE_ID}
       # To expose the OpenAI-compatible API server beyond localhost,
       # uncomment BOTH lines (API_SERVER_KEY is mandatory for auth):
       # - API_SERVER_HOST=0.0.0.0
