@@ -80,6 +80,26 @@ RUN apt-get -o Acquire::Retries=3 update && \
     libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 && \
     rm -rf /var/lib/apt/lists/*
 
+# MonacledMonkey: agent-operated GUI stack for Defold, Krita and Pixelorama.
+# Separate from upstream's opt-in Bot Screen. Installs GUI applications only
+# on this fork's image; preserves upstream's pinned Chromium and PM toolchain.
+# Disk use is significant; verify build space before deploying.
+RUN apt-get -o Acquire::Retries=3 update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+    xvfb openbox dbus-x11 xdotool x11-utils wmctrl imagemagick krita \
+    fonts-dejavu-core fonts-liberation fonts-noto-color-emoji \
+    libgtk-3-0t64 libopenal1 libsdl2-2.0-0 libgl1 libglx-mesa0 \
+    libglu1-mesa libxss1 libsecret-1-0 libnotify4 libxtst6 \
+    libxrender1 libxi6 libxinerama1 libxcursor1 libfuse2t64 fuse3 && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV HERMES_AGENT_GUI_DISPLAY=:99
+ENV HERMES_AGENT_GUI_SCREEN=1280x720x24
+ENV DISPLAY=:99
+ENV LIBGL_ALWAYS_SOFTWARE=1
+ENV ALSOFT_DRIVERS=null
+ENV NO_AT_BRIDGE=1
+
 # Bot Screen (opt-in): PACKAGES["apt"] from tools/bot_desktop/runtime.py plus apt
 # `chromium` for the restricted-userns sandbox fallback. PM already stages
 # pinned full Chromium for both variants; no separate Playwright install.
@@ -440,6 +460,10 @@ RUN mkdir -p /etc/cont-init.d && \
     chmod +x /etc/cont-init.d/01-hermes-setup
 COPY --chmod=0755 docker/cont-init.d/015-supervise-perms /etc/cont-init.d/015-supervise-perms
 COPY --chmod=0755 docker/cont-init.d/02-reconcile-profiles /etc/cont-init.d/02-reconcile-profiles
+
+# MonacledMonkey: GUI session and mounted Defold editor launchers.
+COPY --chmod=0755 docker/agent-gui-session.sh /usr/local/bin/agent-gui-session
+COPY --chmod=0755 docker/defold-wrapper.sh /usr/local/bin/defold
 
 # ---------- Runtime ----------
 ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist
