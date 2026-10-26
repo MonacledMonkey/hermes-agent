@@ -40,8 +40,8 @@
 #
 services:
   gateway:
-    build: .
-    image: hermes-agent:upgrade-20261026
+    # Prebuilt, separately tagged image; no build on space-constrained NUC.
+    image: ghcr.io/monacledmonkey/hermes-agent:nuc-upgrade-20261026@sha256:4df30f60ab6dba557dfd427e479987791f35b1b0f3f947e655e64ea6ba943d30
     container_name: hermes
     restart: unless-stopped
     network_mode: host
