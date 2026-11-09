@@ -126,7 +126,7 @@ jobs:
           import sqlite3
 
           root = Path('/fixture')
-          for name in ('default','forge','editor','rose-fixture'):
+          for name in ('default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','aux-fixture'):
               home = root if name == 'default' else root/'profiles'/name
               home.mkdir(parents=True, exist_ok=True)
               path = home/'state.db'
@@ -155,11 +155,13 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-          for name in ('default','forge','editor','rose-fixture'):
+          for name in ('default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','aux-fixture'):
               home = Path('state') if name == 'default' else Path('state/profiles') / name
               key = 'rehearsal-' + name + '-synthetic-local-only-e3841a1b7ac3'
               cfg = {'gateway':{'multiplex_profiles':name=='default'},
                      'platforms':{'api_server':{'enabled':True,'extra':{'host':'127.0.0.1','port':8642,'key':key}}}}
+              if name in ('default','rose-fixture'):
+                  cfg['mcp_servers']={'home_assistant_fixture':{'url':'http://127.0.0.1:19311/mcp','headers':{'Authorization':'Bearer synthetic-ha-local-only'}}}
               (home / 'config.yaml').write_text(json.dumps(cfg), encoding='utf-8')
               (home / '.env').write_text(f'API_SERVER_ENABLED=true\nAPI_SERVER_KEY={key}\nAPI_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=8642\n', encoding='utf-8')
           PY
@@ -174,7 +176,8 @@ jobs:
           from hermes_cli.profiles import profiles_to_serve
           import sqlite3
           root = Path('/opt/data')
-          for name, source in [('default','default'),('forge','forge'),('editor','editor'),('rose-fixture','rose-fixture')]:
+          for name in ('default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','aux-fixture'):
+              source = name
               home = root if name == 'default' else root/'profiles'/name
               db = SessionDB(home/'state.db')
               sid = 'rehearsal-' + source
@@ -185,7 +188,7 @@ jobs:
               with sqlite3.connect(home/'state.db') as sql:
                   assert sql.execute('pragma integrity_check(1)').fetchone()[0] == 'ok'
               print('PASS migrated and reopened', name)
-          assert {name for name, _ in profiles_to_serve(True)} == {'default','forge','editor','rose-fixture'}
+          assert {name for name, _ in profiles_to_serve(True)} == {'default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','aux-fixture'}
           print('PASS multiplex profile discovery')
           PY
           docker run --rm --network none --memory 1g --cpus 1 --pids-limit 128 --user 10000:10000 -e HERMES_HOME=/opt/data -v "$PWD/state:/opt/data" -v "$PWD/verify-state.py:/test.py:ro" --entrypoint /opt/hermes/.venv/bin/python hermes-20261109-rehearsal /test.py
@@ -217,7 +220,7 @@ jobs:
           docker exec -i hermes-rehearsal /opt/hermes/.venv/bin/python - <<'PY'
           import json, time, urllib.request, urllib.error
           from hermes_cli.gateway_multiplex_served import recorded_served_profiles
-          expected = {'default','forge','editor','rose-fixture'}
+          expected = {'default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','aux-fixture'}
           for _ in range(30):
               if set(recorded_served_profiles() or []) == expected:
                   break
@@ -239,4 +242,37 @@ jobs:
                   raise AssertionError('incorrect credential accepted')
               print('PASS isolated profile route and wrong-key rejection',name)
           PY
+          cat > fixture-mcp.py <<'PY'
+          from mcp.server.fastmcp import FastMCP
+          server = FastMCP('synthetic-home-assistant', host='127.0.0.1', port=19311, stateless_http=True, json_response=True)
+
+          @server.tool()
+          def get_entity_state(entity_id: str) -> str:
+              """Return only synthetic read-only state."""
+              assert entity_id == 'sensor.rehearsal_fixture'
+              return 'REHEARSAL_ENTITY_STATE'
+          server.run(transport='streamable-http')
+          PY
+          docker cp fixture-mcp.py hermes-rehearsal:/tmp/fixture-mcp.py
+          docker exec -d -u 10000:10000 hermes-rehearsal /opt/hermes/.venv/bin/python /tmp/fixture-mcp.py
+          for i in $(seq 1 24); do
+            code=$(docker exec hermes-rehearsal curl -s --max-time 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:19311/mcp || true)
+            if [ "$code" != 000 ]; then break; fi
+            sleep 1
+          done
+          test "$code" != 000
+          for home in /opt/data /opt/data/profiles/rose-fixture; do
+            docker exec -i -u 10000:10000 -e HERMES_HOME="$home" hermes-rehearsal /opt/hermes/.venv/bin/python - <<'PY'
+          from tools.mcp_tool_discovery import discover_mcp_tools
+          from tools.registry import registry
+          names = discover_mcp_tools(['home_assistant_fixture'])
+          matches = [name for name in names if name.endswith('get_entity_state')]
+          assert len(matches) == 1, names
+          result = registry.dispatch(matches[0], {'entity_id':'sensor.rehearsal_fixture'})
+          assert 'REHEARSAL_ENTITY_STATE' in str(result), result
+          print('PASS synthetic Home Assistant MCP discovery and read-only tool call')
+          PY
+          done
+          docker exec -u 10000:10000 hermes-rehearsal /opt/hermes/.venv/bin/hermes --profile rose-fixture config --help >/dev/null
+          echo 'PASS Rosemary profile selector CLI compatibility'
           docker inspect --format 'memory={{.HostConfig.Memory}} oom={{.State.OOMKilled}} network={{.HostConfig.NetworkMode}}' hermes-rehearsal
