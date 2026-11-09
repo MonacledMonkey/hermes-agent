@@ -150,6 +150,28 @@ jobs:
           fi
           sudo chown 10000:10000 state
           docker run --rm --network none --memory 512m --cpus 1 --pids-limit 96 --user 10000:10000 -e HERMES_HOME=/fixture -v "$PWD/state:/fixture" -v "$PWD/seed.py:/seed.py:ro" --entrypoint /opt/hermes/.venv/bin/python "$old" /seed.py
+          sudo tar -C state -cf hermes-fixture-snapshot.tar .
+          sudo chown "$(id -u):$(id -g)" hermes-fixture-snapshot.tar
+          sha256sum hermes-fixture-snapshot.tar > hermes-fixture-snapshot.sha256
+          sha256sum -c hermes-fixture-snapshot.sha256
+          mkdir restored-old
+          sudo tar --same-owner -xf hermes-fixture-snapshot.tar -C restored-old
+          sudo tar -df hermes-fixture-snapshot.tar -C restored-old
+          docker run --rm -i --network none --memory 512m --cpus 1 --pids-limit 96 --user 10000:10000 -e HERMES_HOME=/fixture -v "$PWD/restored-old:/fixture" --entrypoint /opt/hermes/.venv/bin/python "$old" - <<'PY'
+          from pathlib import Path
+          from hermes_state import SessionDB
+          import sqlite3
+          root=Path('/fixture')
+          for path in [root/'state.db',*sorted((root/'profiles').glob('*/state.db'))]:
+              profile='default' if path.parent==root else path.parent.name
+              with sqlite3.connect(path.as_uri()+'?mode=ro',uri=True) as sql:
+                  assert sql.execute('PRAGMA integrity_check(1)').fetchone()[0]=='ok'
+              store=SessionDB(path)
+              assert [m['content'] for m in store.get_messages('rehearsal-'+profile)]==['Synthetic message for '+profile,'Synthetic reply for '+profile]
+              store.close()
+          assert len(list(root.rglob('state.db')))==12
+          print('PASS checksummed fixture archive and twelve old-image restored conversations')
+          PY
           docker image rm "$old"
           sudo chown -R "$(id -u):$(id -g)" state
           python3 - <<'PY'
@@ -160,6 +182,9 @@ jobs:
               key = 'rehearsal-' + name + '-synthetic-local-only-e3841a1b7ac3'
               cfg = {'gateway':{'multiplex_profiles':name=='default'},
                      'platforms':{'api_server':{'enabled':True,'extra':{'host':'127.0.0.1','port':8642,'key':key}}}}
+              cfg['model']={'default':'gpt-6-luna' if name=='default' else 'gpt-6-sol','provider':'openai-codex'}
+              cfg['agent']={'reasoning_effort':'low' if name in ('default','ops','rose-fixture','aux-fixture') else 'high'}
+              cfg['delegation']={'model':'gpt-6-sol','reasoning_effort':'high'}
               if name in ('default','rose-fixture'):
                   cfg['mcp_servers']={'home_assistant_fixture':{'url':'http://127.0.0.1:19311/mcp','headers':{'Authorization':'Bearer synthetic-ha-local-only'}}}
               (home / 'config.yaml').write_text(json.dumps(cfg), encoding='utf-8')
@@ -192,6 +217,24 @@ jobs:
           print('PASS multiplex profile discovery')
           PY
           docker run --rm --network none --memory 1g --cpus 1 --pids-limit 128 --user 10000:10000 -e HERMES_HOME=/opt/data -v "$PWD/state:/opt/data" -v "$PWD/verify-state.py:/test.py:ro" --entrypoint /opt/hermes/.venv/bin/python hermes-20261109-rehearsal /test.py
+          for home in /opt/data /opt/data/profiles/builder /opt/data/profiles/devteam; do
+            docker run --rm -i --network none --memory 768m --cpus 1 --pids-limit 96 --user 10000:10000 -e HERMES_HOME="$home" -v "$PWD/state:/opt/data" --entrypoint /opt/hermes/.venv/bin/python hermes-20261109-rehearsal - <<'PY'
+          import os
+          from hermes_cli.config import load_config_readonly
+          from hermes_constants import parse_reasoning_effort
+          from tools.delegate_tool_config import _child_reasoning, _load_config
+          profile=os.environ['HERMES_HOME']
+          cfg=load_config_readonly()
+          default=profile=='/opt/data'
+          assert cfg['model']['default']==('gpt-6-luna' if default else 'gpt-6-sol')
+          assert cfg['model']['provider']=='openai-codex'
+          assert cfg['agent']['reasoning_effort']==('low' if default else 'high')
+          d=_load_config()
+          assert d['model']=='gpt-6-sol' and d['reasoning_effort']=='high'
+          assert _child_reasoning(None,d,None)==parse_reasoning_effort('high')
+          print('PASS candidate profile model and delegated reasoning config',profile.rsplit('/',1)[1])
+          PY
+          done
           docker run --rm --network none --memory 2g --cpus 2 --pids-limit 160 --user 10000:10000 --entrypoint /bin/sh \
             -v "$PWD/fixtures/defold:/opt/defold:ro" \
             -v "$PWD/fixtures/pixelorama:/usr/local/bin/pixelorama:ro" \
