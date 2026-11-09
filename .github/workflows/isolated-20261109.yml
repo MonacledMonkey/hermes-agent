@@ -5,7 +5,7 @@ on:
     paths: [.github/workflows/isolated-20261109.yml]
 permissions:
   contents: read
-  packages: read
+  packages: write
 jobs:
   runtime:
     runs-on: ubuntu-latest
@@ -342,3 +342,15 @@ jobs:
           docker exec -u 10000:10000 hermes-rehearsal /opt/hermes/.venv/bin/hermes --profile rose-fixture config --help >/dev/null
           echo 'PASS Rosemary profile selector CLI compatibility'
           docker inspect --format 'memory={{.HostConfig.Memory}} oom={{.State.OOMKilled}} network={{.HostConfig.NetworkMode}}' hermes-rehearsal
+      - name: Publish the tested image under a unique deployment candidate tag
+        shell: bash
+        env:
+          CANDIDATE_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          target=ghcr.io/monacledmonkey/hermes-agent:nuc-candidate-v0.23.0-${GITHUB_SHA:0:12}
+          printf '%s' "$CANDIDATE_REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          docker tag hermes-20261109-rehearsal "$target"
+          docker push "$target"
+          docker image inspect "$target" --format '{{json .RepoDigests}}'
