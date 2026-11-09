@@ -210,6 +210,48 @@ jobs:
             -e HERMES_DASHBOARD=true -e HERMES_DASHBOARD_HOST=127.0.0.1 -e HERMES_DASHBOARD_PORT=9119 \
             -e HERMES_HOME=/opt/data -v "$PWD/state:/opt/data" hermes-20261109-rehearsal gateway run >/dev/null
           trap 'docker logs --tail 120 hermes-rehearsal 2>&1 || true; docker rm -f hermes-rehearsal >/dev/null 2>&1 || true' EXIT
+          cat > fixture-mcp.py <<'PY'
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          import json
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(200 if self.path == '/healthz' else 405)
+                  self.end_headers()
+              def do_POST(self):
+                  if self.path != '/mcp' or self.headers.get('Authorization') != 'Bearer synthetic-ha-local-only':
+                      self.send_response(401)
+                      self.end_headers()
+                      return
+                  msg = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                  method, params = msg['method'], msg.get('params', {})
+                  if 'id' not in msg:
+                      self.send_response(202)
+                      self.end_headers()
+                      return
+                  if method == 'initialize':
+                      result = {'protocolVersion':params['protocolVersion'], 'capabilities':{'tools':{}}, 'serverInfo':{'name':'synthetic-home-assistant','version':'1.0'}}
+                  elif method == 'tools/list':
+                      result = {'tools':[{'name':'get_entity_state','description':'Synthetic state','inputSchema':{'type':'object','properties':{'entity_id':{'type':'string'}},'required':['entity_id']}}]}
+                  elif method == 'tools/call' and params.get('name')=='get_entity_state' and params.get('arguments')=={'entity_id':'sensor.rehearsal_fixture'}:
+                      result = {'content':[{'type':'text','text':'REHEARSAL_ENTITY_STATE'}], 'isError':False}
+                  else:
+                      result = {}
+                  body = json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':result}).encode()
+                  self.send_response(200)
+                  self.send_header('Content-Type','application/json')
+                  self.send_header('Content-Length',str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+          ThreadingHTTPServer(('127.0.0.1',19311), Handler).serve_forever()
+          PY
+          docker cp fixture-mcp.py hermes-rehearsal:/tmp/fixture-mcp.py
+          docker exec -d -u 10000:10000 hermes-rehearsal /bin/sh -c '/opt/hermes/.venv/bin/python -u /tmp/fixture-mcp.py > /tmp/fixture-mcp.log 2>&1'
+          ready=false
+          for i in $(seq 1 20); do
+            if docker exec hermes-rehearsal curl -fsS --max-time 2 http://127.0.0.1:19311/healthz; then ready=true; break; fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then docker exec hermes-rehearsal cat /tmp/fixture-mcp.log || true; exit 1; fi
           for i in $(seq 1 60); do
             if docker exec hermes-rehearsal curl -fsS --max-time 2 http://127.0.0.1:9119/ >/dev/null 2>&1; then break; fi
             test "$(docker inspect --format '{{.State.Running}}' hermes-rehearsal)" = true
@@ -242,25 +284,6 @@ jobs:
                   raise AssertionError('incorrect credential accepted')
               print('PASS isolated profile route and wrong-key rejection',name)
           PY
-          cat > fixture-mcp.py <<'PY'
-          from mcp.server.fastmcp import FastMCP
-          server = FastMCP('synthetic-home-assistant', host='127.0.0.1', port=19311, stateless_http=True, json_response=True)
-
-          @server.tool()
-          def get_entity_state(entity_id: str) -> str:
-              """Return only synthetic read-only state."""
-              assert entity_id == 'sensor.rehearsal_fixture'
-              return 'REHEARSAL_ENTITY_STATE'
-          server.run(transport='streamable-http')
-          PY
-          docker cp fixture-mcp.py hermes-rehearsal:/tmp/fixture-mcp.py
-          docker exec -d -u 10000:10000 hermes-rehearsal /opt/hermes/.venv/bin/python /tmp/fixture-mcp.py
-          for i in $(seq 1 24); do
-            code=$(docker exec hermes-rehearsal curl -s --max-time 2 -o /dev/null -w '%{http_code}' http://127.0.0.1:19311/mcp || true)
-            if [ "$code" != 000 ]; then break; fi
-            sleep 1
-          done
-          test "$code" != 000
           for home in /opt/data /opt/data/profiles/rose-fixture; do
             docker exec -i -u 10000:10000 -e HERMES_HOME="$home" hermes-rehearsal /opt/hermes/.venv/bin/python - <<'PY'
           from tools.mcp_tool_discovery import discover_mcp_tools
