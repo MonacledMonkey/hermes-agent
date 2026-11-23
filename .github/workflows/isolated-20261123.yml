@@ -1,0 +1,357 @@
+name: Hermes isolated compatibility rehearsal
+on:
+  push:
+    branches: [rehearsal/2026-11-23-hermes-0.23.3]
+    paths: [.github/workflows/isolated-20261123.yml]
+permissions:
+  contents: read
+  packages: write
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Test migration, profile routing and custom GUI
+        shell: bash
+        env:
+          REHEARSAL_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          df -h .
+          mkdir -p image/docker state fixtures/defold fixtures/obsidian fixtures/host-data fixtures/rosemary
+          cat > image/docker/agent-gui-session.sh <<'EOF'
+          #!/bin/sh
+          # Start or reuse the agent-owned virtual GUI session, then optionally run a command.
+          # Intended for non-interactive agent smokes: Xvfb + openbox + xdotool/import.
+          set -eu
+          
+          DISPLAY_VALUE="${DISPLAY:-${HERMES_AGENT_GUI_DISPLAY:-:99}}"
+          SCREEN_GEOMETRY="${HERMES_AGENT_GUI_SCREEN:-1280x720x24}"
+          XVFB_LOG="${HERMES_AGENT_GUI_XVFB_LOG:-/tmp/hermes-agent-xvfb.log}"
+          OPENBOX_LOG="${HERMES_AGENT_GUI_OPENBOX_LOG:-/tmp/hermes-agent-openbox.log}"
+          
+          export DISPLAY="$DISPLAY_VALUE"
+          export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
+          export ALSOFT_DRIVERS="${ALSOFT_DRIVERS:-null}"
+          export NO_AT_BRIDGE="${NO_AT_BRIDGE:-1}"
+          
+          # Xvfb uses a lock file named /tmp/.X<N>-lock where DISPLAY is :<N>.
+          display_number=$(printf '%s' "$DISPLAY_VALUE" | sed 's/^://; s/\..*$//')
+          lock_file="/tmp/.X${display_number}-lock"
+          
+          if [ ! -S "/tmp/.X11-unix/X${display_number}" ] && [ ! -f "$lock_file" ]; then
+              Xvfb "$DISPLAY_VALUE" -screen 0 "$SCREEN_GEOMETRY" -nolisten tcp >"$XVFB_LOG" 2>&1 &
+              # Give the socket a short bounded window to appear.
+              i=0
+              while [ "$i" -lt 50 ]; do
+                  [ -S "/tmp/.X11-unix/X${display_number}" ] && break
+                  i=$((i + 1))
+                  sleep 0.1
+              done
+          fi
+          
+          if command -v openbox >/dev/null 2>&1; then
+              if ! DISPLAY="$DISPLAY_VALUE" wmctrl -m >/dev/null 2>&1; then
+                  DISPLAY="$DISPLAY_VALUE" openbox >"$OPENBOX_LOG" 2>&1 &
+                  sleep 0.5
+              fi
+          fi
+          
+          if [ "$#" -eq 0 ]; then
+              printf 'AGENT_GUI_SESSION: READY\n'
+              printf 'DISPLAY=%s\n' "$DISPLAY"
+              printf 'LIBGL_ALWAYS_SOFTWARE=%s\n' "$LIBGL_ALWAYS_SOFTWARE"
+              printf 'ALSOFT_DRIVERS=%s\n' "$ALSOFT_DRIVERS"
+              exit 0
+          fi
+          
+          if [ "${1:-}" = "--" ]; then
+              shift
+          fi
+          
+          exec "$@"
+          EOF
+          cat > image/docker/defold-wrapper.sh <<'EOF'
+          #!/bin/sh
+          # Container-visible Defold Editor launcher.
+          # Mount the host Defold install at /opt/defold:ro, then call `defold [project-dir]`.
+          set -eu
+          
+          DEFOLD_HOME="${DEFOLD_HOME:-/opt/defold}"
+          
+          if [ -x "$DEFOLD_HOME/Defold" ]; then
+              cd "$DEFOLD_HOME"
+              exec "$DEFOLD_HOME/Defold" "$@"
+          fi
+          
+          if [ -x "$DEFOLD_HOME/defold" ]; then
+              cd "$DEFOLD_HOME"
+              exec "$DEFOLD_HOME/defold" "$@"
+          fi
+          
+          printf 'defold wrapper: no executable found at %s/Defold or %s/defold\n' "$DEFOLD_HOME" "$DEFOLD_HOME" >&2
+          printf 'Mount the host Defold install into the container, e.g. /opt/defold:/opt/defold:ro\n' >&2
+          exit 127
+          EOF
+          cat > image/Dockerfile <<'EOF'
+          FROM docker.io/nousresearch/hermes-agent@sha256:41468459379a943cf0a25a55589e230d244bd9f95b83cff5eca789470c892fac
+          USER root
+          # MonacledMonkey: agent-operated GUI stack for Defold, Krita and Pixelorama.
+          # Separate from upstream's opt-in Bot Screen. Installs GUI applications only
+          # on this fork's image; preserves upstream's pinned Chromium and PM toolchain.
+          # Disk use is significant; verify build space before deploying.
+          RUN apt-get -o Acquire::Retries=3 update && \
+              DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+              xvfb openbox dbus-x11 xdotool x11-utils wmctrl imagemagick krita \
+              fonts-dejavu-core fonts-liberation fonts-noto-color-emoji \
+              libgtk-3-0t64 libopenal1 libsdl2-2.0-0 libgl1 libglx-mesa0 \
+              libglu1-mesa libxss1 libsecret-1-0 libnotify4 libxtst6 \
+              libxrender1 libxi6 libxinerama1 libxcursor1 libfuse2t64 fuse3 && \
+              rm -rf /var/lib/apt/lists/*
+          
+          ENV HERMES_AGENT_GUI_DISPLAY=:99
+          ENV HERMES_AGENT_GUI_SCREEN=1280x720x24
+          ENV DISPLAY=:99
+          ENV LIBGL_ALWAYS_SOFTWARE=1
+          ENV ALSOFT_DRIVERS=null
+          ENV NO_AT_BRIDGE=1
+          COPY --chmod=0755 docker/agent-gui-session.sh /usr/local/bin/agent-gui-session
+          COPY --chmod=0755 docker/defold-wrapper.sh /usr/local/bin/defold
+          EOF
+          docker build --platform linux/amd64 -t hermes-20261123-rehearsal image
+          docker image inspect hermes-20261123-rehearsal --format 'candidate={{.Id}} arch={{.Architecture}}'
+          docker run --rm --network none --memory 256m --cpus .5 --pids-limit 32 --entrypoint /opt/hermes/.venv/bin/python hermes-20261123-rehearsal -c 'from pathlib import Path; expected="caafe5389ae585ef77387a962aee05b1bcf17029"; p=Path("/opt/hermes/.hermes_build_sha"); s=Path("/opt/hermes/install-stamp.json"); identity=(p.read_text() if p.exists() else "")+(s.read_text() if s.exists() else ""); assert expected in identity, "Official candidate release commit identity not verified"; print("PASS exact Hermes v0.23.3 release source identity")'
+          cat > seed.py <<'PY'
+          from pathlib import Path
+          from hermes_state import SessionDB
+          import sqlite3
+
+          root = Path('/fixture')
+          for name in ('default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','deskpilot-support','kyc-agent'):
+              home = root if name == 'default' else root/'profiles'/name
+              home.mkdir(parents=True, exist_ok=True)
+              path = home/'state.db'
+              db = SessionDB(path)
+              sid = 'rehearsal-' + name
+              db.create_session(sid, 'cli', model='rehearsal-fixture')
+              db.append_message(sid, 'user', 'Synthetic message for ' + name)
+              db.append_message(sid, 'assistant', 'Synthetic reply for ' + name)
+              assert len(db.get_messages(sid)) == 2
+              db.close()
+              with sqlite3.connect(path) as sql:
+                  assert sql.execute('PRAGMA quick_check(1)').fetchone()[0] == 'ok'
+                  sql.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+              print('PASS old database fixture', name)
+          PY
+          old=ghcr.io/monacledmonkey/hermes-agent:nuc-upgrade-20261026@sha256:4df30f60ab6dba557dfd427e479987791f35b1b0f3f947e655e64ea6ba943d30
+          if ! docker pull --platform linux/amd64 "$old"; then
+            printf '%s' "$REHEARSAL_REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            docker pull --platform linux/amd64 "$old"
+            docker logout ghcr.io
+          fi
+          sudo chown 10000:10000 state
+          docker run --rm --network none --memory 512m --cpus 1 --pids-limit 96 --user 10000:10000 -e HERMES_HOME=/fixture -v "$PWD/state:/fixture" -v "$PWD/seed.py:/seed.py:ro" --entrypoint /opt/hermes/.venv/bin/python "$old" /seed.py
+          sudo tar -C state -cf hermes-fixture-snapshot.tar .
+          sudo chown "$(id -u):$(id -g)" hermes-fixture-snapshot.tar
+          sha256sum hermes-fixture-snapshot.tar > hermes-fixture-snapshot.sha256
+          sha256sum -c hermes-fixture-snapshot.sha256
+          mkdir restored-old
+          sudo tar --same-owner -xf hermes-fixture-snapshot.tar -C restored-old
+          sudo tar -df hermes-fixture-snapshot.tar -C restored-old
+          docker run --rm -i --network none --memory 512m --cpus 1 --pids-limit 96 --user 10000:10000 -e HERMES_HOME=/fixture -v "$PWD/restored-old:/fixture" --entrypoint /opt/hermes/.venv/bin/python "$old" - <<'PY'
+          from pathlib import Path
+          from hermes_state import SessionDB
+          import sqlite3
+          root=Path('/fixture')
+          for path in [root/'state.db',*sorted((root/'profiles').glob('*/state.db'))]:
+              profile='default' if path.parent==root else path.parent.name
+              with sqlite3.connect(path.as_uri()+'?mode=ro',uri=True) as sql:
+                  assert sql.execute('PRAGMA integrity_check(1)').fetchone()[0]=='ok'
+              store=SessionDB(path)
+              assert [m['content'] for m in store.get_messages('rehearsal-'+profile)]==['Synthetic message for '+profile,'Synthetic reply for '+profile]
+              store.close()
+          assert len(list(root.rglob('state.db')))==13
+          print('PASS checksummed fixture archive and thirteen old-image restored conversations')
+          PY
+          docker image rm "$old"
+          sudo chown -R "$(id -u):$(id -g)" state
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for name in ('default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','deskpilot-support','kyc-agent'):
+              home = Path('state') if name == 'default' else Path('state/profiles') / name
+              key = 'rehearsal-' + name + '-synthetic-local-only-e3841a1b7ac3'
+              cfg = {'gateway':{'multiplex_profiles':name=='default'},
+                     'platforms':{'api_server':{'enabled':True,'extra':{'host':'127.0.0.1','port':8642,'key':key}}}}
+              cfg['model']={'default':'gpt-6-luna' if name=='default' else 'gpt-6-sol','provider':'openai-codex'}
+              cfg['agent']={'reasoning_effort':'low' if name in ('default','ops','rose-fixture','deskpilot-support','kyc-agent') else 'high'}
+              cfg['delegation']={'model':'gpt-6-sol','reasoning_effort':'high'}
+              if name in ('default','rose-fixture'):
+                  cfg['mcp_servers']={'home_assistant_fixture':{'url':'http://127.0.0.1:19311/mcp','headers':{'Authorization':'Bearer synthetic-ha-local-only'}}}
+              (home / 'config.yaml').write_text(json.dumps(cfg), encoding='utf-8')
+              (home / '.env').write_text(f'API_SERVER_ENABLED=true\nAPI_SERVER_KEY={key}\nAPI_SERVER_HOST=127.0.0.1\nAPI_SERVER_PORT=8642\n', encoding='utf-8')
+          PY
+          printf '#!/bin/sh\nprintf "defold-fixture:%%s\\n" "$1"\n' > fixtures/defold/Defold
+          printf '#!/bin/sh\necho pixelorama-fixture\n' > fixtures/pixelorama
+          printf '# Synthetic vault\n' > fixtures/obsidian/fixture.md
+          chmod +x fixtures/defold/Defold fixtures/pixelorama
+          sudo chown -R 10000:10000 state fixtures/obsidian fixtures/host-data
+          cat > verify-state.py <<'PY'
+          from pathlib import Path
+          from hermes_state import SessionDB
+          from hermes_cli.profiles import profiles_to_serve
+          import sqlite3
+          root = Path('/opt/data')
+          for name in ('default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','deskpilot-support','kyc-agent'):
+              source = name
+              home = root if name == 'default' else root/'profiles'/name
+              db = SessionDB(home/'state.db')
+              sid = 'rehearsal-' + source
+              assert [m['content'] for m in db.get_messages(sid)] == ['Synthetic message for ' + source, 'Synthetic reply for ' + source]
+              db.append_message(sid,'user','candidate append ' + name)
+              assert db.get_messages(sid)[-1]['content'] == 'candidate append ' + name
+              db.close()
+              with sqlite3.connect(home/'state.db') as sql:
+                  assert sql.execute('pragma integrity_check(1)').fetchone()[0] == 'ok'
+              print('PASS migrated and reopened', name)
+          assert {name for name, _ in profiles_to_serve(True)} == {'default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','deskpilot-support','kyc-agent'}
+          print('PASS multiplex profile discovery')
+          PY
+          docker run --rm --network none --memory 1g --cpus 1 --pids-limit 128 --user 10000:10000 -e HERMES_HOME=/opt/data -v "$PWD/state:/opt/data" -v "$PWD/verify-state.py:/test.py:ro" --entrypoint /opt/hermes/.venv/bin/python hermes-20261123-rehearsal /test.py
+          for home in /opt/data /opt/data/profiles/builder /opt/data/profiles/devteam; do
+            docker run --rm -i --network none --memory 768m --cpus 1 --pids-limit 96 --user 10000:10000 -e HERMES_HOME="$home" -v "$PWD/state:/opt/data" --entrypoint /opt/hermes/.venv/bin/python hermes-20261123-rehearsal - <<'PY'
+          import os
+          from hermes_cli.config import load_config_readonly
+          from hermes_constants import parse_reasoning_effort
+          from tools.delegate_tool_config import _child_reasoning, _load_config
+          profile=os.environ['HERMES_HOME']
+          cfg=load_config_readonly()
+          default=profile=='/opt/data'
+          assert cfg['model']['default']==('gpt-6-luna' if default else 'gpt-6-sol')
+          assert cfg['model']['provider']=='openai-codex'
+          assert cfg['agent']['reasoning_effort']==('low' if default else 'high')
+          d=_load_config()
+          assert d['model']=='gpt-6-sol' and d['reasoning_effort']=='high'
+          assert _child_reasoning(None,d,None)==parse_reasoning_effort('high')
+          print('PASS candidate profile model and delegated reasoning config',profile.rsplit('/',1)[1])
+          PY
+          done
+          docker run --rm --network none --memory 2g --cpus 2 --pids-limit 160 --user 10000:10000 --entrypoint /bin/sh \
+            -v "$PWD/fixtures/defold:/opt/defold:ro" \
+            -v "$PWD/fixtures/pixelorama:/usr/local/bin/pixelorama:ro" \
+            -v "$PWD/fixtures/obsidian:/opt/obsidian/hermes-dev-team-vault" \
+            -v "$PWD/fixtures/host-data:/opt/host-data" \
+            hermes-20261123-rehearsal -ec '
+              test "$(defold demo-project)" = defold-fixture:demo-project
+              test "$(pixelorama)" = pixelorama-fixture
+              test -r /opt/obsidian/hermes-dev-team-vault/fixture.md
+              printf "%s\n" synthetic > /opt/obsidian/hermes-dev-team-vault/rehearsal.md
+              printf "%s\n" synthetic > /opt/host-data/rehearsal.txt
+              timeout 30 agent-gui-session -- sh -ec "xdpyinfo >/dev/null; wmctrl -m; krita --version; import -window root /tmp/rehearsal.png; test -s /tmp/rehearsal.png"
+              echo "PASS GUI/Xvfb/Openbox/Krita and synthetic Defold/Pixelorama/Obsidian mount contracts"
+            '
+          docker run -d --name hermes-rehearsal --network none --memory 4g --cpus 2 --pids-limit 512 \
+            -e HERMES_DASHBOARD=true -e HERMES_DASHBOARD_HOST=127.0.0.1 -e HERMES_DASHBOARD_PORT=9119 \
+            -e HERMES_HOME=/opt/data -v "$PWD/state:/opt/data" hermes-20261123-rehearsal gateway run >/dev/null
+          trap 'docker logs --tail 120 hermes-rehearsal 2>&1 || true; docker rm -f hermes-rehearsal >/dev/null 2>&1 || true' EXIT
+          cat > fixture-mcp.py <<'PY'
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+          import json
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  self.send_response(200 if self.path == '/healthz' else 405)
+                  self.end_headers()
+              def do_POST(self):
+                  if self.path != '/mcp' or self.headers.get('Authorization') != 'Bearer synthetic-ha-local-only':
+                      self.send_response(401)
+                      self.end_headers()
+                      return
+                  msg = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                  method, params = msg['method'], msg.get('params', {})
+                  if 'id' not in msg:
+                      self.send_response(202)
+                      self.end_headers()
+                      return
+                  if method == 'initialize':
+                      result = {'protocolVersion':params['protocolVersion'], 'capabilities':{'tools':{}}, 'serverInfo':{'name':'synthetic-home-assistant','version':'1.0'}}
+                  elif method == 'tools/list':
+                      result = {'tools':[{'name':'get_entity_state','description':'Synthetic state','inputSchema':{'type':'object','properties':{'entity_id':{'type':'string'}},'required':['entity_id']}}]}
+                  elif method == 'tools/call' and params.get('name')=='get_entity_state' and params.get('arguments')=={'entity_id':'sensor.rehearsal_fixture'}:
+                      result = {'content':[{'type':'text','text':'REHEARSAL_ENTITY_STATE'}], 'isError':False}
+                  else:
+                      result = {}
+                  body = json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':result}).encode()
+                  self.send_response(200)
+                  self.send_header('Content-Type','application/json')
+                  self.send_header('Content-Length',str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+          ThreadingHTTPServer(('127.0.0.1',19311), Handler).serve_forever()
+          PY
+          docker cp fixture-mcp.py hermes-rehearsal:/tmp/fixture-mcp.py
+          docker exec -d -u 10000:10000 hermes-rehearsal /bin/sh -c '/opt/hermes/.venv/bin/python -u /tmp/fixture-mcp.py > /tmp/fixture-mcp.log 2>&1'
+          ready=false
+          for i in $(seq 1 20); do
+            if docker exec hermes-rehearsal curl -fsS --max-time 2 http://127.0.0.1:19311/healthz; then ready=true; break; fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then docker exec hermes-rehearsal cat /tmp/fixture-mcp.log || true; exit 1; fi
+          for i in $(seq 1 60); do
+            if docker exec hermes-rehearsal curl -fsS --max-time 2 http://127.0.0.1:9119/ >/dev/null 2>&1; then break; fi
+            test "$(docker inspect --format '{{.State.Running}}' hermes-rehearsal)" = true
+            sleep 2
+          done
+          docker exec hermes-rehearsal curl -fsS --max-time 5 http://127.0.0.1:9119/ -o /dev/null
+          echo 'PASS supervised dashboard'
+          docker exec -i hermes-rehearsal /opt/hermes/.venv/bin/python - <<'PY'
+          import json, time, urllib.request, urllib.error
+          from hermes_cli.gateway_multiplex_served import recorded_served_profiles
+          expected = {'default','asset','builder','devteam','ops','orchestrator','qa','release','reviewer','uiux','rose-fixture','deskpilot-support','kyc-agent'}
+          for _ in range(30):
+              if set(recorded_served_profiles() or []) == expected:
+                  break
+              time.sleep(2)
+          else:
+              raise RuntimeError('gateway did not serve all rehearsal profiles')
+          for name in sorted(expected):
+              path = '/v1/models' if name == 'default' else f'/p/{name}/v1/models'
+              url = 'http://127.0.0.1:8642' + path
+              key = 'rehearsal-' + name + '-synthetic-local-only-e3841a1b7ac3'
+              req = urllib.request.Request(url, headers={'Authorization':'Bearer '+key})
+              with urllib.request.urlopen(req, timeout=5) as response:
+                  assert response.status == 200 and 'data' in json.load(response)
+              try:
+                  urllib.request.urlopen(urllib.request.Request(url, headers={'Authorization':'Bearer rehearsal-wrong-synthetic-key'}),timeout=5)
+              except urllib.error.HTTPError as err:
+                  assert err.code in (401,403), err.code
+              else:
+                  raise AssertionError('incorrect credential accepted')
+              print('PASS isolated profile route and wrong-key rejection',name)
+          PY
+          for home in /opt/data /opt/data/profiles/rose-fixture; do
+            docker exec -i -u 10000:10000 -e HERMES_HOME="$home" hermes-rehearsal /opt/hermes/.venv/bin/python - <<'PY'
+          from tools.mcp_tool_discovery import discover_mcp_tools
+          from tools.registry import registry
+          names = discover_mcp_tools(['home_assistant_fixture'])
+          matches = [name for name in names if name.endswith('get_entity_state')]
+          assert len(matches) == 1, names
+          result = registry.dispatch(matches[0], {'entity_id':'sensor.rehearsal_fixture'})
+          assert 'REHEARSAL_ENTITY_STATE' in str(result), result
+          print('PASS synthetic Home Assistant MCP discovery and read-only tool call')
+          PY
+          done
+          docker exec -u 10000:10000 hermes-rehearsal /opt/hermes/.venv/bin/hermes --profile rose-fixture config --help >/dev/null
+          echo 'PASS Rosemary profile selector CLI compatibility'
+          docker inspect --format 'memory={{.HostConfig.Memory}} oom={{.State.OOMKilled}} network={{.HostConfig.NetworkMode}}' hermes-rehearsal
+      - name: Publish the tested image under a unique deployment candidate tag
+        shell: bash
+        env:
+          CANDIDATE_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          target=ghcr.io/monacledmonkey/hermes-agent:nuc-candidate-v0.23.3-${GITHUB_SHA:0:12}
+          printf '%s' "$CANDIDATE_REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          docker tag hermes-20261123-rehearsal "$target"
+          docker push "$target"
+          docker image inspect "$target" --format '{{json .RepoDigests}}'
